@@ -1,6 +1,5 @@
 use {
-    crate::{code_editor, CodeEditor},
-    makepad_code_editor_core::state::ViewId,
+    makepad_code_editor::{code_editor, CodeEditor},
     makepad_widgets::*,
 };
 
@@ -37,9 +36,7 @@ impl AppMain for App {
             }
             return;
         }
-        self.ui.handle_widget_event(cx, event);
-        self.code_editor
-            .handle_event(cx, &mut self.state.code_editor, self.state.view_id, event);
+        self.code_editor.handle_event(cx, event);
     }
 }
 
@@ -51,14 +48,20 @@ impl LiveHook for App {
 }
 
 struct State {
-    code_editor: code_editor::State,
-    view_id: ViewId,
+    code_editor: makepad_code_editor::State,
+    view_id: makepad_code_editor::state::ViewId,
 }
 
 impl Default for State {
     fn default() -> Self {
-        let mut code_editor = code_editor::State::new();
-        let view_id = code_editor.create_view();
+        use std::env;
+
+        let mut code_editor = makepad_code_editor::State::new();
+        let view_id = code_editor
+            .create_view(Some(
+                env::current_dir().unwrap().join("code_editor/src/state.rs"),
+            ))
+            .unwrap();
         Self {
             code_editor,
             view_id,

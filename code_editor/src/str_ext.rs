@@ -1,6 +1,5 @@
 pub trait StrExt {
     fn is_grapheme_boundary(&self, index: usize) -> bool;
-    fn prev_grapheme_boundary(&self, index: usize) -> Option<usize>;
     fn next_grapheme_boundary(&self, index: usize) -> Option<usize>;
     fn graphemes(&self) -> Graphemes<'_>;
 }
@@ -10,26 +9,17 @@ impl StrExt for str {
         self.is_char_boundary(index)
     }
 
-    fn prev_grapheme_boundary(&self, index: usize) -> Option<usize> {
-        if index == 0 {
-            return None;
-        }
-        let mut index = index - 1;
-        while !self.is_grapheme_boundary(index) {
-            index -= 1;
-        }
-        Some(index)
-    }
-
     fn next_grapheme_boundary(&self, index: usize) -> Option<usize> {
         if index == self.len() {
             return None;
         }
-        let mut index = index + 1;
-        while !self.is_grapheme_boundary(index) {
+        let mut index = index;
+        loop {
             index += 1;
+            if self.is_grapheme_boundary(index) {
+                return Some(index);
+            }
         }
-        Some(index)
     }
 
     fn graphemes(&self) -> Graphemes<'_> {
@@ -47,8 +37,8 @@ impl<'a> Iterator for Graphemes<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let index = self.string.next_grapheme_boundary(0)?;
-        let (string_0, string_1) = self.string.split_at(index);
-        self.string = string_1;
-        Some(string_0)
+        let (grapheme, remaining_string) = self.string.split_at(index);
+        self.string = remaining_string;
+        Some(grapheme)
     }
 }
