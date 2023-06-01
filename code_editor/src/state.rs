@@ -28,7 +28,10 @@ impl State {
     pub fn context(&self, view_id: ViewId) -> Context<'_> {
         let view = &self.views[&view_id];
         let model = &self.models[&view.model_id];
-        Context { text: &model.text }
+        Context {
+            text: &model.text,
+            token_lens: &model.token_lens,
+        }
     }
 
     pub fn create_view<P>(&mut self, path: Option<P>) -> Result<ViewId, io::Error>
@@ -44,6 +47,7 @@ impl State {
         } else {
             self.create_model(None)?
         };
+
         let view_id = ViewId(self.view_id);
         self.view_id += 1;
         self.views.insert(view_id, View { model_id });
@@ -66,7 +70,7 @@ impl State {
     }
 
     fn create_model(&mut self, path: Option<PathBuf>) -> Result<ModelId, io::Error> {
-        use std::fs;
+        use {crate::StrExt, std::fs};
 
         let mut text: Vec<_> = if let Some(path) = &path {
             String::from_utf8_lossy(&fs::read(path)?).into_owned()
@@ -79,6 +83,23 @@ impl State {
         if text.is_empty() {
             text.push(String::new());
         }
+
+        let tokens = text
+            .iter()
+            .map(|text| {
+                text.split_at_whitespace_boundaries()
+                    .map(|string| TokenLen {
+                        len: string.len(),
+                        kind: if string.chars().next().unwrap().is_whitespace() {
+                            TokenKind::Whitespace
+                        } else {
+                            TokenKind::Unknown
+                        },
+                    })
+                    .collect()
+            })
+            .collect();
+
         let model_id = ModelId(self.model_id);
         self.model_id += 1;
         self.models.insert(
@@ -87,6 +108,7 @@ impl State {
                 view_ids: HashSet::new(),
                 path: path.clone(),
                 text,
+                token_lens: tokens,
             },
         );
         if let Some(path) = path {
@@ -119,16 +141,32 @@ struct Model {
     view_ids: HashSet<ViewId>,
     path: Option<PathBuf>,
     text: Vec<String>,
+    token_lens: Vec<Vec<TokenLen>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TokenLen {
+    pub len: usize,
+    pub kind: TokenKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TokenKind {
+    Whitespace,
+    Unknown,
+}
+
+#[derive(Debug)]
 pub struct Context<'a> {
     text: &'a [String],
+    token_lens: &'a [Vec<TokenLen>],
 }
 
 impl<'a> Context<'a> {
     pub fn lines(&self) -> Lines<'a> {
         Lines {
             text: self.text.iter(),
+            token_lens: self.token_lens.iter(),
         }
     }
 }
@@ -136,12 +174,59 @@ impl<'a> Context<'a> {
 #[derive(Clone, Debug)]
 pub struct Lines<'a> {
     text: slice::Iter<'a, String>,
+    token_lens: slice::Iter<'a, Vec<TokenLen>>,
 }
 
 impl<'a> Iterator for Lines<'a> {
-    type Item = &'a str;
+    type Item = Line<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.text.next()?)
+        Some(Line {
+            text: self.text.next()?,
+            token_lens: self.token_lens.next()?,
+        })
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Line<'a> {
+    text: &'a str,
+    token_lens: &'a [TokenLen],
+}
+
+impl<'a> Line<'a> {
+    pub fn tokens(&self) -> Tokens<'a> {
+        Tokens {
+            text: &self.text,
+            token_lens: self.token_lens.iter(),
+            position: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Tokens<'a> {
+    text: &'a str,
+    position: usize,
+    token_lens: slice::Iter<'a, TokenLen>,
+}
+
+impl<'a> Iterator for Tokens<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let token_len = self.token_lens.next()?;
+        let position = self.position;
+        self.position += token_len.len;
+        Some(Token {
+            text: &self.text[position..][..token_len.len],
+            kind: token_len.kind,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Token<'a> {
+    pub text: &'a str,
+    pub kind: TokenKind,
 }

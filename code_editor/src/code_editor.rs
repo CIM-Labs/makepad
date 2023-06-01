@@ -40,8 +40,11 @@ impl CodeEditor {
         let mut max_line_size_x = 0.0;
         let mut position = DVec2::new();
         for line in state.context(view_id).lines() {
-            self.draw_text.draw_abs(cx, position - scroll_position, line);
-            position.x += line.graphemes().count() as f64 * glyph_size.x;
+            for token in line.tokens() {
+                self.draw_text
+                    .draw_abs(cx, position - scroll_position, token.text);
+                position.x += token.text.graphemes().count() as f64 * glyph_size.x;
+            }
             max_line_size_x = max_line_size_x.max(position.x);
             position.x = 0.0;
             position.y += glyph_size.y;
