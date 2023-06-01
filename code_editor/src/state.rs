@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
+    ops::Range,
     path::{Path, PathBuf},
     slice,
 };
@@ -29,8 +30,9 @@ impl State {
         let view = &self.views[&view_id];
         let model = &self.models[&view.model_id];
         Context {
+            selections: &view.selections,
             text: &model.text,
-            token_lens: &model.token_lens,
+            tokens: &model.tokens,
         }
     }
 
@@ -38,6 +40,26 @@ impl State {
     where
         P: AsRef<Path> + Into<PathBuf>,
     {
+        let selections = vec![Selection {
+            anchor: Position {
+                line_index: 0,
+                byte_index: 10,
+            },
+            cursor: Position {
+                line_index: 10,
+                byte_index: 4,
+            }
+        }, Selection {
+            anchor: Position {
+                line_index: 10,
+                byte_index: 19,
+            },
+            cursor: Position {
+                line_index: 15,
+                byte_index: 0,
+            }
+        }];
+
         let model_id = if let Some(path) = path {
             if let Some(model_id) = self.model_ids_by_path.get(path.as_ref()).copied() {
                 model_id
@@ -50,7 +72,13 @@ impl State {
 
         let view_id = ViewId(self.view_id);
         self.view_id += 1;
-        self.views.insert(view_id, View { model_id });
+        self.views.insert(
+            view_id,
+            View {
+                selections,
+                model_id,
+            },
+        );
         self.models
             .get_mut(&model_id)
             .unwrap()
@@ -88,8 +116,8 @@ impl State {
             .iter()
             .map(|text| {
                 text.split_at_whitespace_boundaries()
-                    .map(|string| TokenLen {
-                        len: string.len(),
+                    .map(|string| Token {
+                        byte_count: string.len(),
                         kind: if string.chars().next().unwrap().is_whitespace() {
                             TokenKind::Whitespace
                         } else {
@@ -108,7 +136,7 @@ impl State {
                 view_ids: HashSet::new(),
                 path: path.clone(),
                 text,
-                token_lens: tokens,
+                tokens: tokens,
             },
         );
         if let Some(path) = path {
@@ -131,6 +159,29 @@ pub struct ViewId(usize);
 #[derive(Debug)]
 struct View {
     model_id: ModelId,
+    selections: Vec<Selection>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct Selection {
+    anchor: Position,
+    cursor: Position,
+}
+
+impl Selection {
+    fn start(self) -> Position {
+        self.anchor.min(self.cursor)
+    }
+
+    fn end(self) -> Position {
+        self.anchor.max(self.cursor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct Position {
+    pub line_index: usize,
+    pub byte_index: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -141,13 +192,13 @@ struct Model {
     view_ids: HashSet<ViewId>,
     path: Option<PathBuf>,
     text: Vec<String>,
-    token_lens: Vec<Vec<TokenLen>>,
+    tokens: Vec<Vec<Token>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct TokenLen {
-    pub len: usize,
-    pub kind: TokenKind,
+struct Token {
+    byte_count: usize,
+    kind: TokenKind,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -158,75 +209,132 @@ pub enum TokenKind {
 
 #[derive(Debug)]
 pub struct Context<'a> {
+    selections: &'a [Selection],
     text: &'a [String],
-    token_lens: &'a [Vec<TokenLen>],
+    tokens: &'a [Vec<Token>],
 }
 
 impl<'a> Context<'a> {
     pub fn lines(&self) -> Lines<'a> {
         Lines {
+            selections: self.selections,
             text: self.text.iter(),
-            token_lens: self.token_lens.iter(),
+            tokens: self.tokens.iter(),
+            line_index: 0,
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Lines<'a> {
+    selections: &'a [Selection],
     text: slice::Iter<'a, String>,
-    token_lens: slice::Iter<'a, Vec<TokenLen>>,
+    tokens: slice::Iter<'a, Vec<Token>>,
+    line_index: usize,
 }
 
 impl<'a> Iterator for Lines<'a> {
     type Item = Line<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let end = self
+            .selections
+            .iter()
+            .position(|selection| selection.start().line_index > self.line_index)
+            .unwrap_or_else(|| self.selections.len());
+        let start = if end > 0 && self.selections[end - 1].end().line_index > self.line_index {
+            end - 1
+        } else {
+            end
+        };
+        let selections = &self.selections[..end];
+        self.selections = &self.selections[start..];
+        let line_index = self.line_index;
+        self.line_index += 1;
         Some(Line {
+            selections,
             text: self.text.next()?,
-            token_lens: self.token_lens.next()?,
+            tokens: self.tokens.next()?,
+            line_index,
         })
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Line<'a> {
+    selections: &'a [Selection],
     text: &'a str,
-    token_lens: &'a [TokenLen],
+    tokens: &'a [Token],
+    line_index: usize,
 }
 
 impl<'a> Line<'a> {
+    pub fn selections(&self) -> Selections<'a> {
+        Selections {
+            selections: self.selections.iter(),
+            text: &self.text,
+            line_index: self.line_index,
+        }
+    }
+
     pub fn tokens(&self) -> Tokens<'a> {
         Tokens {
             text: &self.text,
-            token_lens: self.token_lens.iter(),
-            position: 0,
+            tokens: self.tokens.iter(),
+            byte_index: 0,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Selections<'a> {
+    selections: slice::Iter<'a, Selection>,
+    text: &'a str,
+    line_index: usize,
+}
+
+impl<'a> Iterator for Selections<'a> {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let selection = self.selections.next()?;
+        let start_byte_index = if selection.start().line_index == self.line_index {
+            selection.start().byte_index
+        } else {
+            0
+        };
+        let end_byte_index = if selection.end().line_index == self.line_index {
+            selection.end().byte_index
+        } else {
+            self.text.len()
+        };
+        Some(start_byte_index..end_byte_index)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Tokens<'a> {
     text: &'a str,
-    position: usize,
-    token_lens: slice::Iter<'a, TokenLen>,
+    tokens: slice::Iter<'a, Token>,
+    byte_index: usize,
 }
 
 impl<'a> Iterator for Tokens<'a> {
-    type Item = Token<'a>;
+    type Item = TokenRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let token_len = self.token_lens.next()?;
-        let position = self.position;
-        self.position += token_len.len;
-        Some(Token {
-            text: &self.text[position..][..token_len.len],
-            kind: token_len.kind,
+        let token = self.tokens.next()?;
+        let byte_index = self.byte_index;
+        self.byte_index += token.byte_count;
+        Some(TokenRef {
+            text: &self.text[byte_index..][..token.byte_count],
+            kind: token.kind,
         })
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Token<'a> {
+pub struct TokenRef<'a> {
     pub text: &'a str,
     pub kind: TokenKind,
 }

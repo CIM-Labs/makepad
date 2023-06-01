@@ -45,6 +45,9 @@ impl CodeEditor {
                     .draw_abs(cx, position - scroll_position, token.text);
                 position.x += token.text.graphemes().count() as f64 * glyph_size.x;
             }
+            for selection_range in line.selections() {
+                // TODO: Draw selection ranges
+            }
             max_line_size_x = max_line_size_x.max(position.x);
             position.x = 0.0;
             position.y += glyph_size.y;
