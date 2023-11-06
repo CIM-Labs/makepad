@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.71"
-components = [ "rustc", "rustfmt", "rustc-dev", "rust-src", "rust-analyzer", "clippy" ]
+channel = "nightly"
+components = [ "rustc", "rustfmt", "rustc-dev", "rust-src", "rust-analyzer", "clippy", "wasm32-unknown-unknown" ]
 targets = [ "x86_64-unknown-linux-gnu" ]
 profile = "default"

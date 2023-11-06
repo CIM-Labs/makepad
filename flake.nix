@@ -61,6 +61,7 @@
               cargo-whatfeatures
               lld
               clang
+              gcc
               zsh
               git
               just
@@ -74,6 +75,8 @@
                 sdk_6_0
                 sdk_7_0
               ])
+              binutils
+              alsaLib
             ];
 
           shellHook = ''
